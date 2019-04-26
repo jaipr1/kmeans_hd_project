@@ -1,0 +1,438 @@
+import csv
+import pandas as pd
+import matplotlib
+import matplotlib.pyplot as plt
+import pylab
+import sklearn
+import sklearn.cluster as skc
+import numpy as np
+import warnings
+from sklearn.cluster import KMeans as KMeans
+from numpy import genfromtxt
+from numpy import array
+from numpy import reshape
+from tableone import TableOne
+from sklearn.decomposition import PCA
+import mpl_toolkits.mplot3d
+from mpl_toolkits.mplot3d import axes3d
+from sklearn.preprocessing import Imputer
+
+
+warnings.filterwarnings('ignore')
+
+with open('/Users/Jai/project/baseline.csv') as fName:                                                                                                                                                            
+    fReader = csv.reader(fName, dialect=csv.excel)                                                                                                                                                          
+    temp = next(fReader)                                                                                                                                                                                 
+    headers_linear = []                                                                                                                                                                                     
+    for line in temp:                                                                                                                                                                                       
+        headers_linear.append(line)
+    data_linear = []                                                                                                                                                                                        
+    for line in fReader:                                                                                                                                                                                    
+        data_linear.append(line)
+    
+print("Total no. of rows: %d"%(fReader.line_num)) 
+
+
+df = pd.read_csv('/Users/Jai/project/baseline.csv', engine = 'python', header = 0, index_col = 'subjid')
+df_numeric = pd.read_csv('/Users/Jai/project/baseline.csv', engine = 'python', header = 0, usecols = ((i for i in headers_linear if 'vis' not in i)))
+profiles = pd.read_csv('/Users/Jai/project/profile.csv', engine = 'python', header = 0, sep = '\t', index_col = 'subjid')
+
+df_profiled = pd.merge(df,profiles, on = 'subjid')
+df_profiled = df_profiled.dropna(how='all', axis = 0) 
+df_profiled = df_profiled[df_profiled['caghigh'] != '>70']
+
+df_manifest = df[df.hdcat == 3]
+df_premanifest = df[df.hdcat == 2]
+numpy_data = df.values
+
+from sklearn.preprocessing import StandardScaler
+from sklearn.preprocessing import MinMaxScaler
+from sklearn.impute import SimpleImputer
+df = df_manifest
+df = df.drop(['studyid', 'seq', 'visit', 'visdy', 'visstat'], axis = 1)
+df = df[df.age != '<18']
+
+nannp = np.array([])
+for x in df:
+     nannp = np.append(nannp,((df[x].isna().sum())))
+     
+nandf = pd.DataFrame(columns = headers_linear)
+nannp_s = pd.Series(nannp, name = 'nans')
+nandf = nandf.append(nannp_s)
+nandf = nandf.apply(lambda x: x.shift(-x.notnull().values.argmax()), axis=1)
+nandf = nandf.drop(nandf.columns[-290:],axis=1)
+nandf = nandf.transpose()
+nandf.fillna(0)
+
+#Looking at the distribution of NaNs across the whole dataframe
+print(nandf.describe())
+
+#Setting a threshold for NaNs based on summary statistics above
+nans_threshold = 3000
+cond_df = (nandf[nandf.nans < nans_threshold])
+print("The number of remaining features after removing columns with more than " + str(nans_threshold) + " NaN values is " + (str(cond_df.shape)[:4]+")"))
+
+cond_df = cond_df.transpose()
+feature_list = list(cond_df.columns)
+df_filtered = df.loc[:, df.columns.isin(feature_list)]
+df_filtered = df_filtered.dropna(how='all')   
+
+df_filtered['age'] = df['age']
+df_filtered = df_filtered[df_filtered.age != '<18']
+
+
+imp_mean = SimpleImputer(missing_values=np.nan, strategy='mean')
+df_filtered = df_filtered.drop(['fascore', 'motscore','tfcscore','prosupr','adl','fiscore','miscore'], axis = 1)                         #removing some of PC1 variables from clustering
+df_filtered = df_filtered.drop(['prosupl','gait','dysarth','fingtapr','fingtapl','sacvelh','sacvelv'], axis = 1)     #removing some of PC1 variables from clustering
+df_filtered = df_filtered.drop(['depscore','pbas3fr','pbas3sv'], axis = 1)     #removing some of PC2 variables from clustering
+df_filtered = df_filtered.drop(['updmed', 'updmh', 'updhdh', 'pbas10sm__4', 'pbas10sm__5','pbas10sm__2'], axis = 1)   #removing columns with all NaNs to prevent removal by Imputer. pd.df.dropna() didn't work for this.
+df_filtered = df_filtered.drop(['brady','dysttrnk','dystrue','chorface','chorlue','sdmt1','irrscore'], axis = 1) #removing other variables interested in later
+df_filtered = df_filtered.drop(['sdmt2','age','weight','bmi','isced','rigarml','rigarmr','tongue','verfct5','scnt1','swrt1','pbas1sv','pbas1fr','pbas6sv','pbas6fr','ocularh','ocularv','sacinith','tandem'], axis = 1) #removing other variables interested in later
+
+imp_mean.fit(df_filtered)
+unscaled_data = imp_mean.transform(df_filtered)
+
+df_filtered.to_csv('/Users/Jai/project/checkdf.csv')
+
+scaler = StandardScaler()
+scaled_data = scaler.fit_transform(unscaled_data)
+
+
+n_components = 110
+pca = PCA(n_components) 
+pca_data = pca.fit_transform(scaled_data)
+result_complete = pd.DataFrame(pca_data, index=df.index)
+result_top3 = np.array(pca_data[:,:3])
+result=pd.DataFrame(pca_data[:,:86], columns=['PCA%i' % i for i in range(0,86)], index=df.index)
+# result_df = pd.DataFrame(pca_data,columns=df8.columns)
+
+x = str(round(float(pca.explained_variance_ratio_[0])*100,2))
+y = str(round(float(pca.explained_variance_ratio_[1])*100,2))
+print(x + "%" +  " of the variance can be explained by Principal Component 1, and " + y + "% " + "of the variance can be explained by Principal Component 2." )
+for w in range(0,10):
+    print(str(round(float(pca.explained_variance_ratio_[w])*100,2)))
+pca_ratios = []
+print("Full results: ")
+for z in range (0,n_components):
+    value = (round(float(pca.explained_variance_ratio_[z])*100,2))
+    pca_ratios.append(value)
+pca_ratios_df = pd.DataFrame(data=pca_ratios, columns = ['proportion'])
+pca_ratios_df = pca_ratios_df.cumsum(axis=0)
+
+
+pca_ratios_df['index1'] = pca_ratios_df.index
+# plt.figure(figsize=(15,5))
+plt.yticks(np.arange(0, 200, step=15))
+plt.ylabel("Cumulative Proportion of Variance Explained")
+plt.xlabel("Number of Principal Components")
+plt.bar(pca_ratios_df['index1'], pca_ratios_df['proportion'])
+
+
+pca.explained_variance_
+cumsum = np.cumsum(pca.explained_variance_ratio_)
+d = np.argmax(cumsum >= 0.95) + 1
+print("The number of dimensions required to preserve 95% of variance is " + str(d))
+
+col_names = ["inertia"] 
+dict1 = {}
+for k in range(2,7,1):
+    kmeans = KMeans(n_clusters= k ,init = 'k-means++', random_state = 29).fit(result_complete.values)
+    dict1[k] = kmeans.inertia_
+inertia_df = pd.DataFrame(dict1, col_names)
+inertia_df.index.name = "k"
+inertia_df = inertia_df.transpose()
+print(inertia_df)
+
+plt.plot(inertia_df['inertia'])
+plt.xlabel("k", fontsize=12)
+plt.ylabel("Inertia")
+plt.title("Inertia Scores for Values of k")
+plt.show()
+
+result_complete_array = result_complete.values
+result_array = result.values
+X = result_array
+kmeans = KMeans(n_clusters=3,init = 'k-means++', random_state=42)
+kmeans.fit(X)
+# print("Labels are", kmeans.labels_)
+# print("Cluster centres are", kmeans.cluster_centers_) 
+plt.scatter(X[:,0],X[:,1], c=kmeans.labels_, cmap='rainbow')
+plt.scatter(kmeans.cluster_centers_[:,0] ,kmeans.cluster_centers_[:,1], color='black')
+plt.title('Manifest k-means Results')
+
+
+#Cluster analysis
+df['clusters'] = kmeans.labels_
+df_means = (df.groupby(['clusters']).mean())
+
+
+axes = plt.gca()
+# axes.set_ylim([1,-20])
+
+plt.show()
+
+
+# affixing cluster labels to original dataframe
+df_kmeans = df_filtered                                 
+df_kmeans['cluster'] = kmeans.labels_
+df_means_concat = pd.merge(df_kmeans, df_profiled) 
+
+#creating dataframes for each cluster 
+df_means_concat = df_means_concat[np.isfinite(df_means_concat['cluster'])]
+df_cluster0 = df_means_concat[df_means_concat['cluster'] == 0]
+df_cluster1 = df_means_concat[df_means_concat['cluster'] == 1]
+df_cluster2 = df_means_concat[df_means_concat['cluster'] == 2]
+df_cluster3 = df_means_concat[df_means_concat['cluster'] == 3]
+
+df_means_concat.to_csv('/Users/Jai/project/clusters.csv')
+df_means_concat = (df_means_concat.groupby(['cluster']).mean())
+df_means_concat.to_csv('/Users/Jai/project/clusters2.csv')
+# print(df_means_concat['pbas1sv']) #only choose variables not included in clustering, otherwise differences in clusters will be artificial.
+# print(df_means_concat['pbas3sv'])
+# print(df_means_concat['pbas6sv'])
+# print(df_means_concat['chorbol'])
+# print(df_means_concat['brady'])
+
+r = df_means_concat.idxmax(axis=0)           #dataframe matching clusters to mean highest value for each variable
+r.to_csv('/Users/Jai/project/clusters_assignment.csv')
+
+df_means_concat['tfcscore']        #columns with NaNs, or string values will have been removed
+
+import scipy as sp
+main_df = pd.DataFrame(columns = ['var_name','highest_in_cluster','t_statistic'])      #reset storage dataframe
+
+# using Imputer and df.dropna() to get rid of NaNs, printing to new dataframe
+df_means_concat = df_means_concat.dropna(how = 'all', axis = 1)
+imp = SimpleImputer(strategy = 'median')
+imp.fit(df_means_concat)
+df_analysis = imp.transform(df_means_concat)
+df_analysis = pd.DataFrame(df_analysis,columns = df_means_concat.columns)
+
+# Creating dataframes for right hand pronation/supination ability per cluster - this variable was identified as 
+# contributing to PC1 significantly and so was omitted from clustering.
+
+# pass a list of interesting variables - make sure they were omitted from clustering first
+var_list = ['tfcscore','fascore', 'motscore', 'prosupr', 'adl','prosupl','gait', 'dysarth', 'fingtapr','sacvelh','tandem','pbas1fr','pbas1sv','pbas3fr','pbas3sv','pbas6sv','pbas6fr','brady','dysttrnk','dystrue','chortrnk','chorrue','chorlue','sdmt1','bmi','isced','rigarml','rigarmr','tongue','verfct5','scnt1','swrt1','ocularh','ocularv','sacinith','tandem']    
+# var_to_analyse = 'chorrue'
+for var_to_analyse in var_list:
+    
+    prosupr1 = df_cluster0[var_to_analyse].values
+    prosupr1 = prosupr1.reshape(-1, 1)
+    prosupr2 = df_cluster1[var_to_analyse].values
+    prosupr2 = prosupr2.reshape(-1, 1)
+    prosupr3 = df_cluster2[var_to_analyse].values
+    prosupr3 = prosupr3.reshape(-1, 1)
+    prosupr4 = df_cluster3[var_to_analyse].values
+    prosupr4 = prosupr4.reshape(-1, 1)
+
+
+    #Imputing NaNs in each df, as scipy.stats.kruskal(nanpolicy = 'omit') seems to have no effect.
+    imp = SimpleImputer(strategy = 'median')
+
+    imp.fit(prosupr1)
+    prosupr1 = imp.transform(prosupr1)
+    imp.fit(prosupr2)
+    prosupr2 = imp.transform(prosupr2)
+    imp.fit(prosupr3)
+    prosupr3 = imp.transform(prosupr3)
+#     imp.fit(prosupr4)
+#     prosupr4 = imp.transform(prosupr4)
+
+    sp.stats.ttest_ind(prosupr1, prosupr2)
+    tt1 = (sp.stats.ttest_ind(prosupr1, prosupr2).pvalue)
+    tt1a = (sp.stats.ttest_ind(prosupr1, prosupr2).statistic)
+
+    sp.stats.ttest_ind(prosupr1, prosupr3)
+    tt2 = (sp.stats.ttest_ind(prosupr1, prosupr3).pvalue)
+    tt2a = (sp.stats.ttest_ind(prosupr1, prosupr3).statistic)
+
+    sp.stats.ttest_ind(prosupr2, prosupr3)
+    tt3 = (sp.stats.ttest_ind(prosupr2, prosupr3).pvalue)
+    tt3a = (sp.stats.ttest_ind(prosupr2, prosupr3).statistic)
+
+
+
+    tt7=np.empty(1)       
+
+
+    tt_concat = np.concatenate((tt1,tt2,tt3,tt7))         # for 3 clusters
+    tta_concat = np.concatenate((tt1a,tt2a,tt3a,tt7))        # for 3 clusters
+
+
+    tt_concat_df = pd.DataFrame(tt_concat)
+    tt_concat_df.columns = ['p_value']
+    tt_concat_df.index = ['Clusters 1 and 2', 'Clusters 1 and 3', 'Clusters 2 and 3','mode']
+    tt_concat_df['t_statistic'] = tta_concat
+
+    tt_concat_df.to_csv('/Users/Jai/project/results/'+ str(var_to_analyse) +'.csv')
+    temp_df = tt_concat_df
+    temp_df['Higher mean in cluster'] = None
+
+    if float(temp_df.loc['Clusters 1 and 2'].at['t_statistic']) < 0:
+        temp_df.loc['Clusters 1 and 2','Higher mean in cluster'] = 1
+    else:
+        temp_df.loc['Clusters 1 and 2','Higher mean in cluster'] = 2
+
+    if float(temp_df.loc['Clusters 1 and 3'].at['t_statistic']) < 0:
+        temp_df.loc['Clusters 1 and 3','Higher mean in cluster'] = 1
+    else:
+        temp_df.loc['Clusters 1 and 3','Higher mean in cluster'] = 3
+
+    if float(temp_df.loc['Clusters 2 and 3'].at['t_statistic']) < 0:
+        temp_df.loc['Clusters 2 and 3','Higher mean in cluster'] = 2
+    else:
+        temp_df.loc['Clusters 2 and 3','Higher mean in cluster'] = 3
+
+
+
+    temp_mode = temp_df.mode()['Higher mean in cluster'][0]
+    temp_df.loc['mode','Higher mean in cluster'] = temp_mode
+    avg_t = (sum(tta_concat)/len(tta_concat))
+
+    main_df = main_df.append(pd.Series([var_to_analyse, temp_mode, avg_t], index=main_df.columns ), ignore_index=True)
+
+main_df
+main_df.to_csv('/Users/Jai/project/varlist.csv')
+
+kruskal_result_statistic = []
+kruskal_result_pvalue = []
+cluster_1_means = []
+cluster_2_means = []
+cluster_3_means = []
+kruskal_result_df = pd.DataFrame()
+for var_to_analyse in var_list:
+
+    kruskal_0 = df_cluster0[var_to_analyse]
+    kruskal_0.reset_index(drop = True, inplace = True)
+    kruskal_1 = df_cluster1[var_to_analyse]
+    kruskal_1.reset_index(drop = True, inplace = True)
+    kruskal_2 = df_cluster2[var_to_analyse]
+    kruskal_2.reset_index(drop = True, inplace = True)
+
+
+
+    kruskal_df = pd.DataFrame()
+
+
+    kruskal_df['Cluster 0'] = kruskal_0
+    kruskal_df['Cluster 1'] = kruskal_1
+    kruskal_df['Cluster 2'] = kruskal_2
+    
+
+
+
+    kruskal_result = sp.stats.kruskal(kruskal_df['Cluster 0'],kruskal_df['Cluster 1'],kruskal_df['Cluster 2'],nan_policy = 'omit')
+    kruskal_result_statistic.append(kruskal_result.statistic)
+    kruskal_result_pvalue.append(kruskal_result.pvalue)
+    cluster_1_means.append(df_means_concat[var_to_analyse][0])
+    cluster_2_means.append(df_means_concat[var_to_analyse][1])
+    cluster_3_means.append(df_means_concat[var_to_analyse][2])
+    
+kruskal_result_df['Variable'] = var_list
+kruskal_result_df['p-value'] = kruskal_result_pvalue
+kruskal_result_df['mean_cl1'] = cluster_1_means
+kruskal_result_df['mean_cl2'] = cluster_2_means
+kruskal_result_df['mean_cl3'] = cluster_3_means
+
+print(kruskal_result_df)
+
+kruskal_result_df.to_csv('/Users/Jai/project/kruskal_results.csv')
+
+MinMax = MinMaxScaler(feature_range=(0.2, 1))
+scaled_cl1 = MinMax.fit_transform(kruskal_result_df['mean_cl1'].values.reshape(-1,1))
+scaled_cl2 = MinMax.fit_transform(kruskal_result_df['mean_cl2'].values.reshape(-1,1))
+scaled_cl3 = MinMax.fit_transform(kruskal_result_df['mean_cl3'].values.reshape(-1,1))
+
+kruskal_result_df['scaled_cl1'] = scaled_cl1
+kruskal_result_df['scaled_cl2'] = scaled_cl2
+kruskal_result_df['scaled_cl3'] = scaled_cl3
+
+#Printing unscaled data to graph
+x_values = list(kruskal_result_df['Variable'])
+io = kruskal_result_df[['mean_cl1','mean_cl2','mean_cl3']].plot(kind='bar', title ="Mean Values by Variable and Cluster (Log Scale) (Unscaled)", figsize=(15, 10), legend=True, fontsize=12,width=0.5)
+io.set_xticklabels(x_values)
+io.set_xlabel('Variable Name')
+io.set_ylabel('log(mean value)')
+io.legend(labels=['Cluster 1','Cluster 2', 'Cluster 3'])
+io.set_yscale('log')
+io.plot()
+
+#Printing scaled data to graph
+x_values = list(kruskal_result_df['Variable'])
+ia = kruskal_result_df[['scaled_cl1','scaled_cl2','scaled_cl3']].plot(kind='bar', title ="Mean Values by Variable and Cluster (Log Scale) (Scaled)", figsize=(15, 10), legend=True, fontsize=12,width=0.5)
+ia.set_xticklabels(x_values)
+ia.set_xlabel('Variable Name')
+ia.set_ylabel('log(mean value)')
+ia.legend(labels=['Cluster 1','Cluster 2', 'Cluster 3'])
+ia.set_yscale('log')
+
+raw_pca_analysis = (component_analysis.iloc[0:5])
+squared_pca_analysis = raw_pca_analysis.pow(2)
+squared_pca_analysis['PC'] = ['PCA1','PCA2','PCA3','PCA4','PCA5']
+squared_pca_analysis = squared_pca_analysis.set_index('PC')
+square_pca_analysis = squared_pca_analysis.transpose()
+
+
+squared_pca_analysis = squared_pca_analysis.sort_values(by='PCA1',ascending=False, axis = 1)
+PCA_final_1 =(squared_pca_analysis.iloc[0])
+
+squared_pca_analysis = squared_pca_analysis.sort_values(by='PCA2',ascending=False, axis = 1)
+PCA_final_2 =(squared_pca_analysis.iloc[1])
+
+squared_pca_analysis = squared_pca_analysis.sort_values(by='PCA3',ascending=False, axis = 1)
+PCA_final_3 =(squared_pca_analysis.iloc[2])
+
+squared_pca_analysis = squared_pca_analysis.sort_values(by='PCA4',ascending=False, axis = 1)
+PCA_final_4 =(squared_pca_analysis.iloc[3])
+
+squared_pca_analysis = squared_pca_analysis.sort_values(by='PCA5',ascending=False, axis = 1)
+PCA_final_5 =(squared_pca_analysis.iloc[4])
+
+print(PCA_final_1)
+PCA_final_1.to_csv('/Users/Jai/project/PCA_loadings/PCA1.csv')
+PCA_final_2.to_csv('/Users/Jai/project/PCA_loadings/PCA2.csv')
+PCA_final_3.to_csv('/Users/Jai/project/PCA_loadings/PCA3.csv')
+
+ia.plot()
+
+PCA_dataframes = [PCA_final_1,PCA_final_2,PCA_final_3,PCA_final_4,PCA_final_5]
+for data in PCA_dataframes:
+    wc_data = data.to_dict()
+    import matplotlib.pyplot as plt
+    from wordcloud import WordCloud
+
+    wordcloud = WordCloud()
+    wordcloud.generate_from_frequencies(frequencies=wc_data)
+    plt.figure()
+    plt.imshow(wordcloud, interpolation="bilinear")
+    plt.axis("off")
+    plt.show()
+    
+    means_manif = []
+means_premanif = []
+stdevs_manif = []
+stdevs_premanif = []
+describe_vars = ['tfcscore','fascore', 'motscore','adl','prosupr','prosupl','gait', 'dysarth', 'fingtapr','sacvelh','tandem','pbas1fr','pbas1sv','pbas3fr','pbas3sv','pbas6sv','pbas6fr','brady','dysttrnk','dystrue','chortrnk','chorrue','chorlue','rigarml','rigarmr','tongue','ocularh','ocularv','sacinith','sdmt1','verfct5','scnt1','swrt1','bmi','isced']
+
+for var in describe_vars:
+    premanif = df_premanifest[var]
+    stdevs_premanif.append(premanif.std())
+    means_premanif.append(str(round(premanif.mean(),2)) + "(" + str(round(premanif.std(),2)) + ")")
+    
+    manif = df_manifest[var]
+    stdevs_manif.append(manif.std())
+    means_manif.append(str(round(manif.mean(),2)) + "(" + str(round(manif.std(),2)) + ")")
+
+    
+mean_std = pd.DataFrame(columns=['varname','premanifest mean/std', 'manifest mean/std'])
+mean_std['varname'] = describe_vars
+mean_std['premanifest mean/std'] = means_premanif 
+mean_std['manifest mean/std'] = means_manif
+mean_std = mean_std.set_index('varname')
+
+print(mean_std)
+mean_std.to_csv('/Users/Jai/project/mean_std.csv')
+
+
+
+
